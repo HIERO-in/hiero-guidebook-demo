@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>히로 지도 · 동네 데이터</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root { --bg:#0f1116; --fg:#e5e7eb; --sub:#9ca3af; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; background:var(--bg); color:var(--fg); }
+  #bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 14px; border-bottom:1px solid #232733; }
+  #bar b { font-size:15px; }
+  select { background:#1a1d27; color:#fff; border:1px solid #333a49; border-radius:8px; padding:7px 10px; font-weight:700; font-size:14px; }
+  button { border:none; border-radius:8px; padding:8px 12px; font-weight:800; font-size:14px; cursor:pointer; }
+  #follow { background:#0ea5e9; color:#fff; }
+  #follow.on { background:#e63946; }
+  .legend { display:flex; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--sub); margin-left:auto; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:3px; vertical-align:middle; }
+  #map { height:calc(100% - 52px); width:100%; }
+  #count { font-size:13px; color:var(--sub); }
+  .leaflet-popup-content { font-size:13px; line-height:1.5; }
+  /* 근처 맛집 실시간 패널 */
+  #near { position:fixed; left:10px; right:10px; bottom:10px; z-index:1000; background:rgba(15,17,22,.95);
+    border:1px solid #2a2f3d; border-radius:14px; padding:12px 14px; display:none; max-height:38vh; overflow:auto;
+    box-shadow:0 8px 30px rgba(0,0,0,.5); }
+  #near h4 { margin:0 0 8px; font-size:14px; }
+  #near .row { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #20242f; font-size:13px; }
+  #near .row:first-of-type { border-top:none; }
+  #near .cat { font-size:11px; font-weight:800; padding:2px 6px; border-radius:6px; color:#fff; }
+  #near .dist { margin-left:auto; color:#7dd3fc; font-weight:800; white-space:nowrap; }
+  #near .greet { background:#0ea5e9; color:#fff; padding:8px 10px; border-radius:10px; font-weight:800; margin-bottom:8px; display:none; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>🗺️ 히로 동네 데이터</b>
+  <select id="area"></select>
+  <button id="follow">📍 따라가기</button>
+  <span id="count">불러오는 중…</span>
+  <div class="legend">
+    <span><i class="dot" style="background:#e63946"></i>맛집</span>
+    <span><i class="dot" style="background:#b5651d"></i>카페</span>
+    <span><i class="dot" style="background:#2a6cff"></i>편의</span>
+    <span><i class="dot" style="background:#8c4799"></i>교통</span>
+    <span><i class="dot" style="background:#16a34a"></i>생활</span>
+  </div>
+</div>
+<div id="map"></div>
+<div id="near">
+  <div class="greet" id="greet"></div>
+  <h4 id="nearTitle">📍 내 위치 주변</h4>
+  <div id="nearList"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const COLORS = { "맛집":"#e63946", "카페":"#b5651d", "편의":"#2a6cff", "교통":"#8c4799", "생활":"#16a34a" };
+const map = L.map("map", { zoomControl:true }).setView([37.5384, 127.139], 14);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  attribution:"© OpenStreetMap · © CARTO", maxZoom:19,
+}).addTo(map);
+
+let layer = L.layerGroup().addTo(map);
+let DATA = null, FLAT = [];
+let meMarker = null, meAccuracy = null, watchId = null, greeted = false;
+
+// 예약 숙소 (guidebook에서 ?stayLat&stayLng&stayName 전달) — 주민권 반경 도착 감지 녹임
+const sp = new URLSearchParams(location.search);
+const STAY = (sp.get("stayLat") && sp.get("stayLng"))
+  ? { lat: +sp.get("stayLat"), lng: +sp.get("stayLng"), name: sp.get("stayName") || "예약 숙소" }
+  : null;
+const ARRIVE_RADIUS = 50;
+let stayCircle = null;
+if (STAY) {
+  L.circleMarker([STAY.lat, STAY.lng], { radius: 9, color: "#fff", weight: 2, fillColor: "#111827", fillOpacity: 1 })
+    .addTo(map).bindTooltip("🏠 " + STAY.name, { permanent: true, direction: "top", offset: [0, -6] });
+  stayCircle = L.circle([STAY.lat, STAY.lng], { radius: ARRIVE_RADIUS, color: "#C17F3A", weight: 2, fillColor: "#C17F3A", fillOpacity: 0.10 }).addTo(map);
+}
+
+// 거리 계산 (m)
+function dist(aLat, aLng, bLat, bLng) {
+  const R = 6371000, toR = x => x*Math.PI/180;
+  const dLat = toR(bLat-aLat), dLng = toR(bLng-aLng);
+  const s = Math.sin(dLat/2)**2 + Math.cos(toR(aLat))*Math.cos(toR(bLat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+const fmt = m => m < 1000 ? `${Math.round(m)}m` : `${(m/1000).toFixed(1)}km`;
+
+function draw(area) {
+  layer.clearLayers();
+  const places = (DATA.areas[area] || []).filter(p => p.lat && p.lng);
+  const pts = [];
+  for (const p of places) {
+    const c = COLORS[p.category] || "#888";
+    L.circleMarker([p.lat, p.lng], { radius:7, color:"#fff", weight:1.5, fillColor:c, fillOpacity:0.9 })
+      .bindPopup(`<b>${p.name}</b><br><span style="color:${c};font-weight:700">${p.category}</span> · ${p.naverCategory||""}<br><span style="color:#666">${p.address||""}</span>`)
+      .addTo(layer);
+    pts.push([p.lat, p.lng]);
+  }
+  document.getElementById("count").textContent = `${area} · ${places.length}곳`;
+  if (pts.length) map.fitBounds(pts, { padding:[40,40], maxZoom:16 });
+}
+
+// 내 위치 갱신 → 근처 재계산
+function onPosition(pos) {
+  const { latitude:lat, longitude:lng, accuracy:acc } = pos.coords;
+  if (!meMarker) {
+    meMarker = L.circleMarker([lat, lng], { radius:9, color:"#fff", weight:3, fillColor:"#0ea5e9", fillOpacity:1 }).addTo(map);
+    meAccuracy = L.circle([lat, lng], { radius:acc, color:"#0ea5e9", weight:1, fillOpacity:0.08 }).addTo(map);
+  } else {
+    meMarker.setLatLng([lat, lng]); meAccuracy.setLatLng([lat, lng]).setRadius(acc);
+  }
+  map.panTo([lat, lng], { animate:true });
+
+  // 전체 장소 중 가까운 순
+  const near = FLAT.map(p => ({ ...p, d: dist(lat, lng, p.lat, p.lng) }))
+    .sort((a,b) => a.d - b.d).slice(0, 8);
+  const panel = document.getElementById("near");
+  const list = document.getElementById("nearList");
+  panel.style.display = "block";
+  list.innerHTML = near.map(p => {
+    const c = COLORS[p.category] || "#888";
+    return `<div class="row"><span class="cat" style="background:${c}">${p.category}</span> ${p.name} <span class="dist">${fmt(p.d)}</span></div>`;
+  }).join("");
+
+  // 가장 가까운 맛집이 200m 안이면 인사
+  const nearFood = near.find(p => p.category === "맛집" && p.d <= 200);
+  const greet = document.getElementById("greet");
+  greet.style.background = "";
+  if (nearFood) {
+    greet.style.display = "block";
+    greet.textContent = `👋 근처에 "${nearFood.name}" (${fmt(nearFood.d)}) — 가볼까요?`;
+  } else { greet.style.display = "none"; }
+
+  // 예약 숙소 반경 50m 도착 — 주민권 기능 (맛집 인사보다 우선)
+  if (STAY) {
+    const ds = dist(lat, lng, STAY.lat, STAY.lng);
+    const inside = ds <= ARRIVE_RADIUS;
+    if (stayCircle) { const c = inside ? "#16a34a" : "#C17F3A"; stayCircle.setStyle({ color: c, fillColor: c }); }
+    if (inside) {
+      greet.style.display = "block";
+      greet.style.background = "#16a34a";
+      greet.textContent = `🎉 ${STAY.name} 도착! 체크인 안내를 확인하세요.`;
+    }
+  }
+
+  if (!greeted) { greeted = true; document.getElementById("nearTitle").textContent = "📍 내 위치 주변 (가까운 순)"; }
+}
+
+function toggleFollow() {
+  const btn = document.getElementById("follow");
+  if (watchId != null) {
+    navigator.geolocation.clearWatch(watchId); watchId = null;
+    btn.classList.remove("on"); btn.textContent = "📍 따라가기";
+    document.getElementById("near").style.display = "none";
+    return;
+  }
+  if (!navigator.geolocation) { alert("이 브라우저는 위치를 지원하지 않아요."); return; }
+  btn.textContent = "위치 확인 중…";
+  watchId = navigator.geolocation.watchPosition(onPosition,
+    (err) => { alert("위치를 못 받았어요: " + err.message + "\n(https 링크에서 열어야 위치가 됩니다)"); btn.textContent="📍 따라가기"; watchId=null; },
+    { enableHighAccuracy:true, maximumAge:2000, timeout:15000 });
+  btn.classList.add("on"); btn.textContent = "⏹ 따라가기 끄기";
+}
+
+fetch("neighborhood_data.json?t=" + Date.now())
+  .then(r => r.json())
+  .then(d => {
+    DATA = d;
+    FLAT = [];
+    for (const a of Object.keys(d.areas)) for (const p of d.areas[a]) if (p.lat && p.lng) FLAT.push(p);
+    const sel = document.getElementById("area");
+    Object.keys(d.areas).forEach(a => {
+      const o = document.createElement("option");
+      o.value = a; o.textContent = `${a} (${d.areas[a].length})`;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => draw(sel.value);
+    const wantArea = new URLSearchParams(location.search).get("area");
+    if (wantArea && d.areas[wantArea]) sel.value = wantArea;
+    draw(sel.value);
+    if (STAY) map.setView([STAY.lat, STAY.lng], 16); // 예약숙소 중심
+    document.getElementById("follow").onclick = toggleFollow;
+  })
+  .catch(() => { document.getElementById("count").textContent = "데이터를 불러오지 못했어요. 먼저 '동네 데이터 수집'을 실행하세요."; });
+</script>
+</body>
+</html>
