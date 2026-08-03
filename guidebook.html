@@ -9,6 +9,16 @@
   /* 📍 도착 알림 지도 (라이트 — 어쎄 가이드북 톤) */
   #arriveShell { position:relative; height:300px; border-radius:12px; overflow:hidden; border:1px solid var(--line); background:#fff; margin-top:10px; }
   #arriveMap { height:100%; }
+  #arriveShell .clap { position:absolute; left:50%; top:45%; z-index:1200; font-size:80px; pointer-events:none; opacity:0; transform:translate(-50%,-50%) scale(0); text-shadow:0 4px 12px rgba(0,0,0,.35); }
+  #arriveShell .clap.show { animation:clapPop 2.4s ease-out forwards; }
+  @keyframes clapPop {
+    0%{transform:translate(-50%,-50%) scale(0);opacity:0}
+    14%{transform:translate(-50%,-58%) scale(1.35);opacity:1}
+    30%{transform:translate(-50%,-50%) scale(1);opacity:1}
+    50%{transform:translate(-50%,-53%) scale(1.12) rotate(-7deg);opacity:1}
+    68%{transform:translate(-50%,-50%) scale(1) rotate(7deg);opacity:1}
+    100%{transform:translate(-50%,-80%) scale(.85) rotate(0);opacity:0}
+  }
   .amctl { position:absolute; right:12px; z-index:1000; width:40px; height:40px; border-radius:999px; display:flex; align-items:center; justify-content:center; border:1px solid var(--line); background:#fff; color:#374151; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.16); }
   .amctl.home { top:12px; } .amctl.loc { top:60px; }
   .amctl.on { background:var(--brand); color:#fff; border-color:transparent; }
@@ -55,12 +65,17 @@
   .catbtn { border:1px solid var(--line); background:#fff; border-radius:999px; padding:6px 12px; font-size:13px; font-weight:800; cursor:pointer; }
   .catbtn.on { color:#fff; border-color:transparent; }
   .cards { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .card { border:1px solid var(--line); border-radius:12px; padding:11px; }
+  .card { border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .card .thumb { position:relative; height:90px; overflow:hidden; background-color:#e8ecf0; border-bottom:1px solid var(--line); }
+  .card .thumb .tiles { position:absolute; left:50%; top:50%; }
+  .card .thumb .tiles img { position:absolute; width:256px; height:256px; display:block; }
+  .card .thumb .tpin { position:absolute; left:50%; top:50%; z-index:2; transform:translate(-50%,-50%); font-size:20px; line-height:1; filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+  .card .body { padding:10px 11px 11px; }
   .card .cat { font-size:11px; font-weight:800; color:#fff; padding:2px 7px; border-radius:6px; display:inline-block; }
   .card .nm { font-weight:800; font-size:14px; margin:6px 0 3px; }
   .card .ad { font-size:12px; color:var(--sub); line-height:1.4; }
   .mapbtn { display:block; text-align:center; background:var(--brand); color:#fff; text-decoration:none; font-weight:900; padding:13px; border-radius:12px; margin-top:12px; }
-  iframe { width:100%; height:360px; border:1px solid var(--line); border-radius:12px; }
+  iframe { width:100%; height:520px; border:1px solid var(--line); border-radius:12px; }
   footer { padding:22px 18px 40px; text-align:center; color:var(--sub); font-size:12px; }
   .field { width:100%; border:1px solid var(--line); border-radius:10px; padding:12px; font-size:15px; margin-bottom:9px; font-family:inherit; }
   .consent { display:flex; gap:8px; align-items:flex-start; font-size:13px; color:var(--sub); margin:2px 0 12px; }
@@ -139,12 +154,11 @@
     <p class="note" id="recIntro"></p>
     <div class="catbtns" id="catbtns"></div>
     <div class="cards" id="cards"></div>
-    <a class="mapbtn" id="mapLink" href="#" target="_blank">🗺️ 지도에서 내 위치로 보기 (걸으면 근처 맛집 안내)</a>
   </section>
 
   <section>
     <h2>📍 동네 지도</h2>
-    <iframe id="mapFrame" title="동네 지도"></iframe>
+    <iframe id="mapFrame" title="동네 지도" allow="geolocation"></iframe>
   </section>
 
   <footer>이 페이지는 예약하신 숙소를 위해 자동 생성되었습니다 · HIERO 지도 서비스</footer>
@@ -153,6 +167,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 const COLORS = { "맛집":"#e63946", "카페":"#b5651d", "편의":"#2a6cff", "교통":"#8c4799", "생활":"#16a34a" };
+const CATEMOJI = { "맛집":"🍚", "카페":"☕", "편의":"🏪", "교통":"🚉", "생활":"🏥" };
 const CATS = ["맛집","카페","편의","교통","생활"];
 const params = new URLSearchParams(location.search);
 const code = (params.get("code") || "A33").toUpperCase();
@@ -164,22 +179,65 @@ const pCover = params.get("cover");
 const pRef = params.get("ref");
 const pCheckin = params.get("checkin");
 const pCheckout = params.get("checkout");
-const pWifiName = params.get("wifi_name");
-const pWifiPass = params.get("wifi_pass");
+// 🔐 WiFi 정보는 쿼리스트링(?)이 아니라 프래그먼트(#)로 받는다. (주민권 2026-08-03)
+// 프래그먼트는 서버·프록시 접속로그와 Referer 헤더에 실리지 않는다.
+// 가이드북 링크는 호스텍스 대화(에어비앤비·부킹)로 나갈 예정이라, ?wifi_pass= 로 두면
+// 채널 메시지 로그에 비밀번호가 평문으로 영구히 남는다.
+// 옛 링크(?wifi_pass=)도 계속 열리도록 쿼리는 폴백으로만 남긴다.
+const hashParams = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+const pWifiName = hashParams.get("wifi_name") || params.get("wifi_name");
+const pWifiPass = hashParams.get("wifi_pass") || params.get("wifi_pass");
+// 읽었으면 주소창에서 지운다 — 스크린샷·화면공유·어깨너머로 새는 것까지 막는다.
+if (hashParams.get("wifi_name") || hashParams.get("wifi_pass")) {
+  history.replaceState(null, "", location.pathname + location.search);
+}
 const pRoomType = params.get("roomType");
 const pLat = params.get("lat");
 const pLng = params.get("lng");
 const pColor = params.get("color");
 const pCats = (params.get("cats") || "").split(",").filter(Boolean);
-if (pColor) document.documentElement.style.setProperty("--brand", pColor);
+// 색·이미지도 URL에서 온다 — 꼴이 맞는 것만 받는다.
+if (pColor && /^#[0-9a-fA-F]{3,8}$/.test(pColor)) {
+  document.documentElement.style.setProperty("--brand", pColor);
+}
+const isHttpUrl = (u) => { try { return /^https?:$/.test(new URL(u, location.href).protocol); } catch { return false; } };
 
-function chip(t){ return t ? `<span class="chip">${t}</span>` : ""; }
+// 🔐 innerHTML 에 들어가는 값은 전부 이걸 거친다. (주민권 2026-08-03)
+// name·roomType 같은 값이 URL(?name=)에서 그대로 오기 때문에, 안 거르면
+// 링크 하나로 남의 화면에 스크립트를 심을 수 있다(반사형 XSS).
+function esc(v){
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
+function chip(t){ return t ? `<span class="chip">${esc(t)}</span>` : ""; }
+
+// 위치 미니맵 썸네일 (OSM/CARTO 타일, 키 불필요) — 장소 좌표를 중심에 두고 📍
+function miniMapThumb(lat, lng, cat) {
+  const z = 18, T = 256;
+  const n = Math.pow(2, z);
+  const x = (lng + 180) / 360 * n;
+  const latRad = lat * Math.PI / 180;
+  const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+  const gx = x * T, gy = y * T;                 // POI 전역 픽셀
+  const ctx = Math.floor(x), cty = Math.floor(y); // POI 타일
+  let imgs = "";
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const tX = ctx + dx, tY = cty + dy;
+    const left = Math.round(tX * T - gx), top = Math.round(tY * T - gy);
+    imgs += `<img src="https://basemaps.cartocdn.com/light_all/${z}/${tX}/${tY}.png" alt="" style="left:${left}px;top:${top}px">`;
+  }
+  return `<div class="thumb"><div class="tiles">${imgs}</div><span class="tpin">${CATEMOJI[cat] || "📍"}</span></div>`;
+}
 Promise.all([
   fetch("rooms.json?t="+Date.now()).then(r=>r.json()),
   fetch("neighborhood_data.json?t="+Date.now()).then(r=>r.json()),
   fetch("room_coords.json?t="+Date.now()).then(r=>r.json()).catch(()=>({coords:{}})),
-]).then(([roomsDoc, nbhd, coordsDoc]) => {
+  fetch("room_photos.json?t="+Date.now()).then(r=>r.json()).catch(()=>({photos:{}})),
+  fetch("moro_recommend.json?t="+Date.now()).then(r=>r.json()).catch(()=>({items:[]})),
+  fetch("room_times.json?t="+Date.now()).then(r=>r.json()).catch(()=>({times:{}})),
+]).then(([roomsDoc, nbhd, coordsDoc, photosDoc, moroDoc, timesDoc]) => {
   let room = (roomsDoc.rooms||{})[code] || { code, name:code, location:"", area:"강동구 천호동", roomType:"", bed:"", tv:"" };
   room = { ...room };
   // 외부 숙소 파라미터로 덮어쓰기
@@ -197,16 +255,28 @@ Promise.all([
   setupArrival(arriveCoord);
 
   // 체크인 · WiFi (마법사에서 넘어온 값)
-  if (pCheckin) document.getElementById("checkinV").textContent = pCheckin;
-  if (pCheckout) document.getElementById("checkoutV").textContent = pCheckout;
+  // 체크인/체크아웃 시각은 두 군데서 온다 — 발송 링크(방 설정값)와 가이드 만들기 마법사.
+  // 둘 다 "16:00" 처럼 시각만 넘기므로 꼬리말은 여기서 붙인다. 기본 표시("15:00 이후")와 꼴을 맞춘다.
+  // 이미 꼬리말이 붙은 값이 오면 그대로 둔다. (주민권 2026-08-03)
+  // 날짜가 앞에 붙어 와도("2026-08-04 16:00") 꼬리말을 붙인다. 시각만 와도("16:00") 붙인다.
+  const withTail = (v, tail) => /^(\d{4}-\d{2}-\d{2}\s+)?\d{1,2}:\d{2}$/.test(String(v).trim()) ? String(v).trim() + " " + tail : v;
+  // 링크에 시각이 오면 그걸, 없으면 방 설정값(room_times[code])을 쓴다.
+  const rt = (timesDoc.times || {})[code] || {};
+  const cin = pCheckin || rt.checkin, cout = pCheckout || rt.checkout;
+  if (cin) document.getElementById("checkinV").textContent = withTail(cin, "이후");
+  if (cout) document.getElementById("checkoutV").textContent = withTail(cout, "까지");
   document.getElementById("wifiName").textContent = pWifiName || "체크인 시 안내";
   document.getElementById("wifiPass").textContent = pWifiPass || "체크인 시 안내";
 
-  // 커버 이미지 (외부 링크)
-  if (pCover) {
+  // 커버 이미지 — 외부링크(?cover=) 우선, 없으면 방 대표사진(room_photos.json). 실패 시 파란 히어로로 폴백.
+  const roomPhoto = (photosDoc.photos || {})[code];
+  const coverUrl = (pCover && isHttpUrl(pCover)) ? pCover
+    : (roomPhoto && isHttpUrl(roomPhoto)) ? roomPhoto : null;
+  if (coverUrl) {
     const hero = document.querySelector(".hero");
     const img = document.createElement("img");
-    img.src = pCover; img.alt = "";
+    img.src = coverUrl; img.alt = "";
+    img.onerror = () => img.remove();
     hero.insertBefore(img, hero.firstChild);
   }
 
@@ -220,40 +290,88 @@ Promise.all([
   document.getElementById("roominfo").innerHTML = [
     ["방 형태", room.roomType], ["침대", room.bed], ["TV", room.tv],
     ["욕실", room.bath], ["편의", room.facilities],
-  ].filter(x=>x[1]).map(x=>`<div class="kv"><b>${x[0]}</b><span>${x[1]}</span></div>`).join("");
+  ].filter(x=>x[1]).map(x=>`<div class="kv"><b>${esc(x[0])}</b><span>${esc(x[1])}</span></div>`).join("");
 
-  // 동네 추천
-  const places = (nbhd.areas[area] || []);
-  document.getElementById("recIntro").textContent = `${area} 기준 ${places.length}곳을 모았어요. 카테고리를 눌러 골라보세요.`;
+  // 동네 지도 (iframe) — 예약 숙소 좌표 전달
   let mapUrl = `neighborhood_map.html?area=${encodeURIComponent(area)}`;
   if (arriveCoord) mapUrl += `&stayLat=${arriveCoord.lat}&stayLng=${arriveCoord.lng}&stayName=${encodeURIComponent(room.name)}`;
-  document.getElementById("mapLink").href = mapUrl;
   document.getElementById("mapFrame").src = mapUrl;
 
+  // 우리 동네 추천 — 동네지도(숙소 2km) 추천정보를 카테고리별 카드로. 카드↔지도 핀 연동.
   const cbox = document.getElementById("catbtns");
   const cardBox = document.getElementById("cards");
-  function render(cat){
-    [...cbox.children].forEach(b => {
-      const on = b.dataset.cat === cat;
-      b.classList.toggle("on", on);
-      b.style.background = on ? (COLORS[cat]||"#333") : "#fff";
-    });
-    const list = places.filter(p => p.category === cat).slice(0, 6);
-    cardBox.innerHTML = list.map(p => `
-      <div class="card">
-        <span class="cat" style="background:${COLORS[cat]}">${cat}</span>
-        <div class="nm">${p.name}</div>
-        <div class="ad">${p.naverCategory||""}<br>${p.address||""}</div>
-      </div>`).join("") || `<div class="note">이 카테고리 데이터가 없어요.</div>`;
+  const recIntro = document.getElementById("recIntro");
+  const NEARBY = 2000;
+  // 전체 동에서 숙소 2km 이내 POI (동 단위 아님), 가까운 순
+  const near2k = [];
+  if (arriveCoord) {
+    for (const a of Object.keys(nbhd.areas || {})) for (const p of (nbhd.areas[a] || [])) {
+      if (!p.lat || !p.lng) continue;
+      const d = havd(arriveCoord.lat, arriveCoord.lng, p.lat, p.lng);
+      if (d <= NEARBY) near2k.push({ ...p, d });
+    }
+    near2k.sort((x, y) => x.d - y.d);
   }
-  const useCats = pCats.length ? CATS.filter(c => pCats.includes(c)) : CATS;
-  useCats.forEach((c) => {
-    const b = document.createElement("button");
-    b.className = "catbtn"; b.dataset.cat = c; b.textContent = c;
-    b.onclick = () => render(c);
-    cbox.appendChild(b);
-  });
-  render(useCats[0] || "맛집");
+  const useCats = CATS.filter(c => near2k.some(p => p.category === c));
+  const distTxt = d => d < 1000 ? Math.round(d) + "m" : (d/1000).toFixed(1) + "km";
+
+  let lastShown = [], curPage = 0;
+  const PAGE = 8;
+  function renderPager(cat, total, pages) {
+    let pager = document.getElementById("recPager");
+    if (!pager) { pager = document.createElement("div"); pager.id = "recPager"; pager.style.cssText = "display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px"; cardBox.after(pager); }
+    if (pages <= 1) { pager.innerHTML = ""; return; }
+    pager.innerHTML =
+      '<button type="button" class="catbtn" id="pgPrev"' + (curPage === 0 ? " disabled" : "") + ' style="opacity:' + (curPage === 0 ? ".4" : "1") + '">◀ 이전</button>' +
+      '<span style="font-size:13px;color:var(--sub);font-weight:800">' + (curPage + 1) + ' / ' + pages + ' · ' + total + '곳</span>' +
+      '<button type="button" class="catbtn" id="pgNext"' + (curPage === pages - 1 ? " disabled" : "") + ' style="opacity:' + (curPage === pages - 1 ? ".4" : "1") + '">다음 ▶</button>';
+    document.getElementById("pgPrev").onclick = () => { if (curPage > 0) renderCat(cat, curPage - 1); };
+    document.getElementById("pgNext").onclick = () => { if (curPage < pages - 1) renderCat(cat, curPage + 1); };
+  }
+  function renderCat(cat, page) {
+    curPage = page || 0;
+    [...cbox.children].forEach(b => { const on = b.dataset.cat === cat; b.classList.toggle("on", on); b.style.background = on ? (COLORS[cat] || "#333") : "#fff"; });
+    const all = near2k.filter(p => p.category === cat);
+    const pages = Math.max(1, Math.ceil(all.length / PAGE));
+    if (curPage >= pages) curPage = pages - 1;
+    const list = all.slice(curPage * PAGE, curPage * PAGE + PAGE);
+    lastShown = list;
+    cardBox.innerHTML = list.map((p, i) => `
+      <div class="card" data-i="${i}" style="cursor:pointer">
+        ${miniMapThumb(p.lat, p.lng, cat)}
+        <div class="body">
+          <span class="cat" style="background:${COLORS[cat] || "#888"}">${esc(cat)}</span>
+          <div class="nm">${esc(p.name)}</div>
+          <div class="ad">${esc(p.naverCategory || "")}</div>
+          <div class="ad" style="margin-top:5px;color:var(--brand);font-weight:800">숙소에서 ${distTxt(p.d)}</div>
+        </div>
+      </div>`).join("") || `<div class="note">이 카테고리는 2km 안에 없어요.</div>`;
+    cardBox.querySelectorAll(".card").forEach(el => {
+      el.onclick = () => {
+        const p = list[+el.dataset.i];
+        const mf = document.getElementById("mapFrame");
+        if (mf && mf.contentWindow) mf.contentWindow.postMessage({ type: "hieroFocus", lat: p.lat, lng: p.lng, name: p.name, cat: p.category, extra: p.naverCategory || p.address || "" }, "*");
+        if (mf) mf.scrollIntoView({ behavior: "smooth", block: "center" });
+      };
+    });
+    renderPager(cat, all.length, pages);
+  }
+
+  if (!near2k.length) {
+    recIntro.textContent = arriveCoord ? "숙소 2km 안의 추천 정보를 찾지 못했어요." : "숙소 좌표가 없어 근방 추천을 찾지 못했어요.";
+    cbox.style.display = "none"; cardBox.innerHTML = "";
+  } else {
+    recIntro.textContent = `숙소 2km 근방 ${near2k.length}곳을 추천해요. 카테고리를 누르고, 카드를 누르면 지도에 표시돼요.`;
+    cbox.style.display = "flex"; cbox.innerHTML = "";
+    useCats.forEach(c => {
+      const b = document.createElement("button");
+      b.className = "catbtn"; b.dataset.cat = c;
+      b.textContent = `${c} ${near2k.filter(p => p.category === c).length}`;
+      b.onclick = () => renderCat(c, 0);
+      cbox.appendChild(b);
+    });
+    renderCat(useCats[0], 0);
+  }
 }).catch(() => {
   document.getElementById("title").textContent = "데이터를 불러오지 못했어요";
 });
@@ -273,7 +391,7 @@ function stayMarker(name) {
     '<div style="width:34px;height:34px;border-radius:50%;background:#0ea5e9;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center">' +
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg>' +
     '</div>' +
-    '<div style="position:absolute;top:38px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.25)">' + name + '</div>' +
+    '<div style="position:absolute;top:38px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.25)">' + esc(name) + '</div>' +
   '</div>';
 }
 function setupArrival(coord) {
@@ -284,21 +402,28 @@ function setupArrival(coord) {
   if (!coord) { note.textContent = "이 숙소는 좌표 준비 중이라 도착 감지가 곧 제공돼요."; shell.style.display = "none"; return; }
   ACOORD = coord;
   if (typeof L === "undefined") return;
-  aMap = L.map("arriveMap", { zoomControl: true, attributionControl: false }).setView([coord.lat, coord.lng], 16);
+  aMap = L.map("arriveMap", { zoomControl: true, attributionControl: false }).setView([coord.lat, coord.lng], 18);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(aMap);
   L.marker([coord.lat, coord.lng], { icon: L.divIcon({ html: stayMarker(coord.name || "예약 숙소"), className: "", iconSize: [34, 34], iconAnchor: [17, 17] }) }).addTo(aMap);
   aRadius = L.circle([coord.lat, coord.lng], { radius: ARRIVE_RADIUS, color: "#C17F3A", weight: 2, fillColor: "#C17F3A", fillOpacity: 0.12 }).addTo(aMap);
   setTimeout(() => aMap.invalidateSize(), 80);
-  homeBtn.onclick = () => { aMap.setView([ACOORD.lat, ACOORD.lng], 16); };          // 🏠 숙소로 이동
+  homeBtn.onclick = () => { aMap.setView([ACOORD.lat, ACOORD.lng], 18); };          // 🏠 숙소로 이동
   locBtn.onclick = () => {                                                          // 🎯 내 위치로 이동
     if (aWatch == null) startGPS(true);
-    else if (lastUser) aMap.setView(lastUser, 16);
+    else if (lastUser) aMap.setView(lastUser, 18);
   };
   // 진입 시 위치 동의 모달 (좌표 있는 방에서만 — setupArrival은 coord 있을 때만 여기 도달)
   const modal = document.getElementById("gpsModal");
   modal.classList.add("show");
   document.getElementById("gpsYes").onclick = () => { modal.classList.remove("show"); startGPS(true); };
   document.getElementById("gpsNo").onclick = () => { modal.classList.remove("show"); };
+}
+function showClap() {   // 도착 축하 — 숙소 도착 알림 지도 위 박수 이모티콘
+  const shell = document.getElementById("arriveShell");
+  if (!shell) return;
+  let clap = shell.querySelector(".clap");
+  if (!clap) { clap = document.createElement("div"); clap.className = "clap"; clap.textContent = "👏"; shell.appendChild(clap); }
+  clap.classList.remove("show"); void clap.offsetWidth; clap.classList.add("show");
 }
 function startGPS(panFirst) {
   const note = document.getElementById("arriveNote"), locBtn = document.getElementById("locBtn");
@@ -314,9 +439,10 @@ function startGPS(panFirst) {
     if (aRadius) { const c = inside ? "#16a34a" : "#C17F3A"; aRadius.setStyle({ color: c, fillColor: c }); }
     const bar = document.getElementById("arriveBar"); bar.style.display = "flex";
     bar.innerHTML = '<span>±' + Math.round(acc) + 'm</span><span class="' + (inside ? "g" : "a") + '">' + fmtM(d) + " · " + (inside ? "진입" : "바깥") + '</span>';
-    if (first && panFirst) { aMap.setView([lat, lng], 16); first = false; }
+    if (first && panFirst) { aMap.setView([lat, lng], 18); first = false; }
     if (inside && !arrived) {
       arrived = true;
+      showClap();   // 숙소 반경 50m 진입 순간 지도 위 박수
       document.getElementById("arriveBanner").innerHTML = '<div class="ok" style="margin-bottom:10px">🎉 ' + (ACOORD.name || "숙소") + ' 도착! 아래 <b>체크인 · WiFi</b>를 확인하세요.</div>';
       const cs = document.getElementById("checkinV"); if (cs) cs.closest("section").scrollIntoView({ behavior: "smooth", block: "center" });
     } else if (!inside && arrived) { arrived = false; document.getElementById("arriveBanner").innerHTML = ""; }
@@ -333,6 +459,7 @@ document.getElementById("gcSubmit").onclick = async () => {
   const res = document.getElementById("gcResult");
   if (!name || !contact) { res.innerHTML = '<div class="note" style="color:#c0392b">이름과 연락처를 입력해 주세요.</div>'; return; }
   // 데모 번들(정적 호스팅) — 백엔드 저장 없이 안내만. 실제 저장은 운영 링크에서 작동.
+  void contact; void res;
   document.getElementById("gcForm").innerHTML = '<div class="ok">✅ (데모) 입력이 확인됐어요. 실제 저장·도착 안내는 운영 링크에서 작동합니다.</div>';
 };
 </script>

@@ -1,17 +1,1 @@
-{
- "rooms": {
-  "A22": {
-   "code": "A22",
-   "name": "예건 202",
-   "location": "강동역",
-   "area": "강동구 천호동",
-   "roomType": "원룸",
-   "bed": "퀸 1",
-   "tv": "케이블 TV",
-   "bath": "1",
-   "facilities": "TV, 퀸침대",
-   "samsamName": "강동퀸원룸 A22",
-   "transport": ""
-  }
- }
-}
+{"_note":"데모 A22만","rooms":{"A22":{"code":"A22","name":"예건 202","location":"강동역","area":"강동구 천호동","roomType":"원룸","bed":"퀸 1","tv":"케이블 TV","bath":"1","facilities":"TV, 퀸침대","samsamName":"강동퀸원룸 A22","transport":""}}}
