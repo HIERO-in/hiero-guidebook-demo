@@ -16,6 +16,10 @@
   button { border:none; border-radius:8px; padding:8px 12px; font-weight:800; font-size:14px; cursor:pointer; }
   #follow { background:#0ea5e9; color:#fff; }
   #follow.on { background:#e63946; }
+  /* 🏠 숙소로 / 🎯 내 위치로 버튼 */
+  .mapctls { display:flex; flex-direction:column; gap:8px; }
+  .mapctls button { width:40px; height:40px; padding:0; border-radius:999px; background:#fff; color:#374151; border:1px solid #d5d9e0; box-shadow:0 2px 8px rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .mapctls button.on { background:#0ea5e9; color:#fff; border-color:transparent; }
   .legend { display:flex; gap:6px; flex-wrap:wrap; font-size:11px; color:var(--sub); margin-left:auto; }
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:3px; vertical-align:middle; }
   #map { flex:1 1 auto; min-height:0; width:100%; }
@@ -150,6 +154,43 @@ window.addEventListener("message", (e) => {
   const d = e.data;
   if (d && d.type === "hieroFocus") focusPlace(+d.lat, +d.lng);
 });
+
+// 🧭 내 위치 / 숙소 위치 컨트롤 (지도 우상단)
+const HomeLocCtl = L.Control.extend({
+  options: { position: "topright" },
+  onAdd: function () {
+    const d = L.DomUtil.create("div", "mapctls");
+    d.innerHTML =
+      '<button id="homeBtn" type="button" title="숙소로 이동" aria-label="숙소로 이동"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg></button>' +
+      '<button id="locBtn" type="button" title="내 위치로 이동" aria-label="내 위치로 이동"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>';
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  },
+});
+map.addControl(new HomeLocCtl());
+
+function recenterHome() {
+  if (STAY) map.setView([STAY.lat, STAY.lng], 16);
+  else if (FLAT.length) map.fitBounds(FLAT.map(p => [p.lat, p.lng]), { padding: [36, 36], maxZoom: 16 });
+}
+function startLocate() {
+  const locBtn = document.getElementById("locBtn");
+  if (!navigator.geolocation) { alert("이 브라우저는 위치를 지원하지 않아요."); return; }
+  if (!window.isSecureContext) { alert("보안 연결(https)에서만 위치가 작동해요. https 링크로 열어주세요."); return; }
+  locBtn.classList.add("on");
+  let first = true;
+  watchId = navigator.geolocation.watchPosition(pos => {
+    const lat = pos.coords.latitude, lng = pos.coords.longitude;
+    if (!meMarker) meMarker = L.circleMarker([lat, lng], { radius: 8, color: "#fff", weight: 3, fillColor: "#2563eb", fillOpacity: 1 }).addTo(map).bindTooltip("내 위치", { direction: "top", offset: [0, -8] });
+    else meMarker.setLatLng([lat, lng]);
+    if (first) { map.setView([lat, lng], 16); first = false; }
+  }, err => {
+    locBtn.classList.remove("on"); watchId = null;
+    alert("위치를 못 받았어요: " + err.message + " (https 링크에서 열어야 위치가 됩니다)");
+  }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+}
+document.getElementById("homeBtn").onclick = recenterHome;
+document.getElementById("locBtn").onclick = () => { if (watchId == null) startLocate(); else if (meMarker) map.setView(meMarker.getLatLng(), 16); };
 </script>
 </body>
 </html>
